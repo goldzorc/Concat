@@ -146,7 +146,14 @@ class EditorViewModel(application: Application, val path: String) : AndroidViewM
         }
         // Scrubs, the latest one only: a drag sends far more than a frame can show.
         viewModelScope.launch(Dispatchers.IO) {
-            for (seconds in seeks) preview?.seek(seconds)
+            for (seconds in seeks) {
+    val shown = preview ?: continue
+    if (shown.isPlaying()) {
+        shown.pause()
+        _ui.update { it.copy(playing = false) }
+    }
+    shown.seek(seconds)
+            }
         }
         // The playhead, from the engine's clock while it plays.
         viewModelScope.launch {
@@ -199,7 +206,7 @@ class EditorViewModel(application: Application, val path: String) : AndroidViewM
         val duration = _ui.value.view?.duration ?: 0.0
         val at = seconds.coerceIn(0.0, duration)
         scrubbedAt = SystemClock.uptimeMillis()
-        if (_ui.value.playing) pause()
+        _ui.update { it.copy(playing = false) }
         _ui.update { it.copy(position = at) }
         seeks.trySend(at)
     }
