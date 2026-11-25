@@ -4,6 +4,9 @@
 package app.concat.editor.ui.editor
 
 import android.app.Application
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -181,7 +184,30 @@ fun CaptionsSheet(captions: CaptionsViewModel, editor: EditorViewModel, preferCl
     val models by store.state.collectAsStateWithLifecycle()
     val view = editorUi.view
     val sound: List<Clip> = view?.clips?.filter { it.kind.hasSound } ?: emptyList()
-
+    val context = LocalContext.current
+    fun writeTo(uri: android.net.Uri, text: String) {
+        try {
+            context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray(Charsets.UTF_8)) }
+        } catch (_: Exception) {
+        }
+    }
+    val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val content = try {
+                context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
+            } catch (_: Exception) {
+                ""
+            }
+            editor.importSubtitles(Subtitles.parse(uri.lastPathSegment.orEmpty(), content))
+            onDismiss()
+        }
+    }
+    val exportSrt = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        if (uri != null) writeTo(uri, Subtitles.toSrt(editor.subtitleLines()))
+    }
+    val exportAss = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        if (uri != null) writeTo(uri, Subtitles.toAss(editor.subtitleLines(), view?.width ?: 1920, view?.height ?: 1080))
+    }
     LaunchedEffect(Unit) { store.refresh() }
     LaunchedEffect(preferClip, sound.size) {
         val wanted = preferClip?.takeIf { id -> sound.any { it.id == id } } ?: ui.clipId?.takeIf { id -> sound.any { it.id == id } }
@@ -231,6 +257,12 @@ fun CaptionsSheet(captions: CaptionsViewModel, editor: EditorViewModel, preferCl
                         enabled = ui.clipId != null && models.info.transcribers.any { it.id == ui.model && it.downloaded },
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Transcribe") }
+                    SectionLabel("Subtitle files")
+                    OutlinedButton(onClick = { importer.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) { Text("Import SRT / ASS") }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { exportSrt.launch("subtitles.srt") }, modifier = Modifier.weight(1f)) { Text("Export SRT") }
+                        OutlinedButton(onClick = { exportAss.launch("subtitles.ass") }, modifier = Modifier.weight(1f)) { Text("Export ASS") }
+                    }
                 }
                 CaptionsStep.Hearing -> {
                     JobProgress(ui.stage, ui.fraction)
