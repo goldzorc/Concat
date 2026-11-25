@@ -212,7 +212,29 @@ class EditorViewModel(application: Application, val path: String) : AndroidViewM
     }
 
     fun select(clipId: String?) = _ui.update { it.copy(selected = clipId) }
+        /** Subtitle lines onto the timeline as titles, one undo step. */
+    fun importSubtitles(lines: List<SubtitleLine>) {
+        if (lines.isEmpty()) return say("No subtitle lines found in that file.")
+        change("Subtitles") {
+            apply(
+                Commands.batch(
+                    lines.map { line ->
+                        Commands.addTextClip(line.start, JSONObject().put("content", line.text), line.end - line.start)
+                    },
+                ),
+            )
+        }
+    }
 
+    /** The titles on the timeline, in time order. */
+    fun subtitleLines(): List<SubtitleLine> =
+        _ui.value.view?.clips.orEmpty()
+            .filter { it.kind == ClipKind.Text }
+            .mapNotNull { clip ->
+                val words = clip.text?.optString("content").orEmpty()
+                if (words.isBlank()) null else SubtitleLine(clip.start, clip.end, words)
+            }
+            .sortedBy { it.start }
     // -- edits --
 
     private fun change(label: String, body: suspend () -> ProjectView?) {
