@@ -346,7 +346,8 @@ object Commands {
     /** A whole chain as `updateClip` replaces it: [field] is "videoEffects" or "filters". */
     fun setChain(clipId: String, field: String, chain: List<JSONObject>) =
         updateClip(clipId, JSONObject().put(field, JSONArray().apply { chain.forEach { put(it) } }))
-
+    /** A font file the project's titles can name by [family]. */
+    fun addFont(family: String, path: String) = op("addFont").put("family", family).put("path", path)
     fun batch(commands: List<JSONObject>) = op("batch").put("commands", JSONArray().apply { commands.forEach { put(it) } })
 
     /** A title's style: the document's `TextStyle`; fields left out take its defaults. */
