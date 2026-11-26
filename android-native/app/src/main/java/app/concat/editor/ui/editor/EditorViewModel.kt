@@ -213,7 +213,7 @@ class EditorViewModel(application: Application, val path: String) : AndroidViewM
 
     fun select(clipId: String?) = _ui.update { it.copy(selected = clipId) }
         /** Subtitle lines onto the timeline as titles, one undo step. */
-        fun importSubtitles(lines: List<SubtitleLine>) {
+            fun importSubtitles(lines: List<SubtitleLine>) {
         if (lines.isEmpty()) return say("No subtitle lines found in that file.")
         change("Subtitles") {
             val before = _ui.value.view?.clips.orEmpty().map { it.id }.toSet()
@@ -643,9 +643,53 @@ class EditorViewModel(application: Application, val path: String) : AndroidViewM
             apply(Commands.addFont(family, file.absolutePath))
         }
     }
+    init { TextExtras.host = java.lang.ref.WeakReference(this) }
+
+    /** A font file from the phone, registered with the project so titles can name it. */
+    fun addFont(uri: Uri?) {
+        if (uri == null) return
+        change("Font") {
+            val file = withContext(Dispatchers.IO) { copyIn(uri) }
+            val family = file.nameWithoutExtension.substringAfter('-').filter { it.isLetterOrDigit() }.ifEmpty { "CustomFont" }
+            apply(Commands.addFont(family, file.absolutePath))
+        }
+    }
 
     /** A new title at the playhead, or the selected one restyled, with the panel's extra look. */
     fun saveText(clipId: String?, content: String, fontSize: Double, color: String, fontWeight: Double? = null) {
+        val extras = TextExtras.take()
+        if (content.isBlank()) return
+        val existing = _ui.value.view?.clip(clipId)
+        val lane = existing?.let { clip -> _ui.value.view?.tracks?.firstOrNull { it.id == clip.trackId } }
+        val captions = lane?.captions
+        fun styled(base: JSONObject?, words: String): JSONObject {
+            val style = Commands.textStyle(words, fontSize, color, base, fontWeight)
+            if (extras != null) {
+                val keys = extras.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    style.put(key, extras.get(key))
+                }
+            }
+            return style
+        }
+        change("Text") {
+            if (existing != null && lane != null && captions != null) {
+                val words = Commands.updateClip(existing.id, JSONObject().put("text", styled(existing.text, content)))
+                val look = JSONObject(captions.toString()).put("style", styled(captions.optJSONObject("style"), ""))
+                apply(Commands.batch(listOf(words, Commands.setCaptionLook(lane.id, look))))
+            } else if (existing != null) {
+                apply(Commands.updateClip(existing.id, JSONObject().put("text", styled(existing.text, content))))
+            } else {
+                val view = apply(Commands.addTextClip(_ui.value.position, styled(null, content)))
+                view.createdId?.let { id -> _ui.update { it.copy(selected = id) } }
+                view
+            }
+        }
+    }
+    
+    /** A new title at the playhead, or the selected one restyled, with the panel's extra look. */
+    @Suppress("unused") private fun saveTextOld(clipId: String?, content: String, fontSize: Double, color: String, fontWeight: Double? = null) {
         val extras = TextExtras.take()
         if (content.isBlank()) return
         val existing = _ui.value.view?.clip(clipId)
