@@ -155,6 +155,8 @@ data class ProjectView(
     val timelineId: String = "",
     /** The cover as the document holds it (`{"kind":"frame","time":s}` or `{"kind":"picture","path":..}`), or none. */
     val cover: JSONObject? = null,
+    /** Names of the fonts added to the project. */
+    val fonts: List<String> = emptyList(),
 ) {
     val fps: Double get() = rateNum.toDouble() / rateDen.coerceAtLeast(1)
     val duration: Double get() = clips.maxOfOrNull { it.end } ?: 0.0
@@ -244,6 +246,7 @@ data class ProjectView(
                 }.sortedBy { it.start },
                 createdId = json.optString("createdId").ifEmpty { null },
                 timelineId = timeline.optString("id"),
+                fonts = (project.optJSONArray("fonts") ?: JSONArray()).objects().map { it.optString("family") }.filter { it.isNotEmpty() },
             )
         }
 
