@@ -646,7 +646,7 @@ class EditorViewModel(application: Application, val path: String) : AndroidViewM
     init { TextExtras.host = java.lang.ref.WeakReference(this) }
 
     /** A font file from the phone, registered with the project so titles can name it. */
-    fun addFont(uri: Uri?) {
+        fun addFontCopy(uri: Uri?) {
         if (uri == null) return
         change("Font") {
             val file = withContext(Dispatchers.IO) { copyIn(uri) }
@@ -722,7 +722,7 @@ class EditorViewModel(application: Application, val path: String) : AndroidViewM
     }
     
     /** A new title at the playhead, or the selected one restyled when [clipId] names it. */
-     @Suppress("unused") private fun saveTextOld(clipId: String?, content: String, fontSize: Double, color: String, fontWeight: Double? = null) {
+          @Suppress("unused") private fun saveTextOld2(clipId: String?, content: String, fontSize: Double, color: String, fontWeight: Double? = null) {
         if (content.isBlank()) return
         val existing = _ui.value.view?.clip(clipId)
         val lane = existing?.let { clip -> _ui.value.view?.tracks?.firstOrNull { it.id == clip.trackId } }
