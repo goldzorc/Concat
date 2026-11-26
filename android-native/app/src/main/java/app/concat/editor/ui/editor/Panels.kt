@@ -65,6 +65,8 @@ import kotlin.math.abs
 import kotlin.math.ln
 import kotlin.math.pow
 import org.json.JSONObject
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 
 /*
  * The tools' sub-panels: what opens above the toolbar when a tool has
@@ -161,7 +163,7 @@ fun colourOf(hex: String): Color = try {
  * restyled. The words in a field that takes the keyboard at once.
  */
 @Composable
-fun TextPanel(
+@Suppress("unused") private fun TextPanelOld(
     existing: Clip?,
     onSave: (content: String, size: Double, colour: String, weight: Double) -> Unit,
     onClose: () -> Unit,
@@ -418,9 +420,189 @@ fun BackgroundPanel(onPick: (JSONObject) -> Unit, onClose: () -> Unit) {
                 Box(
                     Modifier.size(40.dp).clip(RoundedCornerShape(Radii.sm)).background(colourOf(hex))
                         .border(1.dp, ConcatColors.lineStrong, RoundedCornerShape(Radii.sm))
-                        .clickable { onPick(JSONObject().put("kind", "color").put("color", hex)) },
+                        .clickable { onPick(JSONObject().put("kind", "color").put("color", hex)) }, 
                 )
             }
         }
+    }
+}
+
+/** What a finger changed in the panel beyond size, colour and weight; saveText takes it. */
+object TextExtras {
+    @Volatile var pending: JSONObject? = null
+    @Volatile var host: java.lang.ref.WeakReference<EditorViewModel>? = null
+
+    fun take(): JSONObject? {
+        val now = pending
+        pending = null
+        return now
+    }
+}
+
+@Composable
+private fun StyleColourRow(picked: String, onPick: (String) -> Unit) {
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        for (hex in TEXT_COLOURS) {
+            val on = hex.equals(picked, ignoreCase = true)
+            Box(
+                Modifier.size(32.dp).clip(CircleShape)
+                    .border(if (on) 2.dp else 1.dp, if (on) ConcatColors.accent else ConcatColors.lineStrong, CircleShape)
+                    .padding(if (on) 4.dp else 0.dp)
+                    .clip(CircleShape)
+                    .background(colourOf(hex))
+                    .clickable { onPick(hex) },
+            )
+        }
+    }
+}
+
+@Composable
+fun TextPanel(
+    existing: Clip?,
+    onSave: (content: String, size: Double, colour: String, weight: Double) -> Unit,
+    onClose: () -> Unit,
+    caption: Boolean = false,
+) {
+    val style = existing?.text
+    fun num(key: String, fallback: Double): Float {
+        val value = style?.optDouble(key, fallback) ?: fallback
+        return (if (value.isNaN()) fallback else value).toFloat()
+    }
+    var content by remember(existing?.id) { mutableStateOf(style?.optString("content") ?: "") }
+    var size by remember(existing?.id) { mutableFloatStateOf(num("fontSize", 0.07)) }
+    var colour by remember(existing?.id) { mutableStateOf(style?.optString("color", "#ffffff") ?: "#ffffff") }
+    var weight by remember(existing?.id) { mutableStateOf(style?.optDouble("fontWeight", 700.0) ?: 700.0) }
+    // Null until a finger changes it, so what is not touched stays as it was.
+    var alignSet by remember(existing?.id) { mutableStateOf<String?>(null) }
+    var italicSet by remember(existing?.id) { mutableStateOf<Boolean?>(null) }
+    var underlineSet by remember(existing?.id) { mutableStateOf<Boolean?>(null) }
+    var strikeSet by remember(existing?.id) { mutableStateOf<Boolean?>(null) }
+    var shadowSet by remember(existing?.id) { mutableStateOf<Boolean?>(null) }
+    var strokeSet by remember(existing?.id) { mutableStateOf<Float?>(null) }
+    var strokeColourSet by remember(existing?.id) { mutableStateOf<String?>(null) }
+    var bgColourSet by remember(existing?.id) { mutableStateOf<String?>(null) }
+    var bgAlphaSet by remember(existing?.id) { mutableStateOf<Float?>(null) }
+    var radiusSet by remember(existing?.id) { mutableStateOf<Float?>(null) }
+    var lineSet by remember(existing?.id) { mutableStateOf<Float?>(null) }
+    var trackingSet by remember(existing?.id) { mutableStateOf<Float?>(null) }
+    var fontSet by remember(existing?.id) { mutableStateOf<String?>(null) }
+    var caseSet by remember(existing?.id) { mutableStateOf<String?>(null) }
+
+    val align = alignSet ?: style?.optString("align", "center") ?: "center"
+    val italic = italicSet ?: style?.optBoolean("italic", false) ?: false
+    val underline = underlineSet ?: style?.optBoolean("underline", false) ?: false
+    val strike = strikeSet ?: style?.optBoolean("strikethrough", false) ?: false
+    val shadow = shadowSet ?: style?.optBoolean("shadow", true) ?: true
+    val stroke = strokeSet ?: num("strokeWidth", 0.0)
+    val strokeColour = strokeColourSet ?: style?.optString("strokeColor", "#000000") ?: "#000000"
+    val backdrop = style?.optString("background", "") ?: ""
+    val bgColour = bgColourSet ?: if (backdrop.length >= 7) backdrop.substring(0, 7) else ""
+    val bgAlpha = bgAlphaSet ?: if (backdrop.length == 9) (backdrop.substring(7, 9).toIntOrNull(16) ?: 255) / 255f else 1f
+    val radius = radiusSet ?: num("backgroundRadius", 0.01)
+    val lines = lineSet ?: num("lineHeight", 1.2)
+    val tracking = trackingSet ?: num("tracking", 0.0)
+    val font = fontSet ?: style?.optString("fontFamily", "") ?: ""
+    val letterCase = caseSet ?: style?.optString("textCase", "original") ?: "original"
+
+    val host = TextExtras.host?.get()
+    val hostUi = host?.ui?.collectAsStateWithLifecycle()
+    val customFonts = hostUi?.value?.view?.fonts.orEmpty()
+    val pickFont = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> host?.addFont(uri) }
+
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(existing?.id) { if (existing == null) focus.requestFocus() }
+    fun save() {
+        if (content.isNotBlank()) {
+            val extras = JSONObject()
+            alignSet?.let { extras.put("align", it) }
+            italicSet?.let { extras.put("italic", it) }
+            underlineSet?.let { extras.put("underline", it) }
+            strikeSet?.let { extras.put("strikethrough", it) }
+            shadowSet?.let { extras.put("shadow", it) }
+            strokeSet?.let { extras.put("strokeWidth", it.toDouble()) }
+            strokeColourSet?.let { extras.put("strokeColor", it) }
+            if (bgColourSet != null || bgAlphaSet != null) {
+                val alpha = (bgAlpha * 255f + 0.5f).toInt().coerceIn(0, 255)
+                extras.put("background", if (bgColour.isEmpty()) "" else bgColour + "%02x".format(alpha))
+            }
+            radiusSet?.let { extras.put("backgroundRadius", it.toDouble()) }
+            lineSet?.let { extras.put("lineHeight", it.toDouble()) }
+            trackingSet?.let { extras.put("tracking", it.toDouble()) }
+            fontSet?.let { extras.put("fontFamily", it) }
+            caseSet?.let { extras.put("textCase", it) }
+            TextExtras.pending = extras
+            onSave(content.trim(), size.toDouble(), colour, weight)
+        }
+        onClose()
+    }
+
+    ToolPanel(if (existing == null) "Add text" else if (caption) "Caption" else "Text", onClose = onClose, onConfirm = ::save) {
+        if (caption) PanelLabel("The words are this caption's; the look changes every caption.")
+        BasicTextField(
+            value = content,
+            onValueChange = { content = it },
+            textStyle = ConcatType.title.copy(color = ConcatColors.fg),
+            cursorBrush = SolidColor(ConcatColors.accent),
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            maxLines = 4,
+            modifier = Modifier.fillMaxWidth().focusRequester(focus),
+            decorationBox = { field ->
+                Box(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(Radii.md)).background(ConcatColors.launchField)
+                        .padding(horizontal = Spacing.md, vertical = 10.dp),
+                ) {
+                    if (content.isEmpty()) Text("Enter text", style = ConcatType.title, color = ConcatColors.fgDim)
+                    field()
+                }
+            },
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            ChoiceChip("Regular", selected = weight < 600, onClick = { weight = 400.0 })
+            ChoiceChip("Bold", selected = weight >= 600 && weight < 800, onClick = { weight = 700.0 })
+            ChoiceChip("Black", selected = weight >= 800, onClick = { weight = 900.0 })
+        }
+        ValueSlider("Size", size, 0.03f..0.2f, { "${(it * 100).toInt()}" }, onChange = { size = it })
+        StyleColourRow(colour) { colour = it }
+        PanelLabel("Font")
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            ChoiceChip("Default", selected = font.isBlank() || font.contains("Hanken", ignoreCase = true), onClick = { fontSet = "\"Hanken Grotesk\"" })
+            for (name in customFonts) {
+                ChoiceChip(name, selected = font.trim('"') == name, onClick = { fontSet = name })
+            }
+            ChoiceChip("Add font", selected = false, onClick = { pickFont.launch(arrayOf("*/*")) })
+        }
+        PanelLabel("Letter case")
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            ChoiceChip("Original", selected = letterCase == "original", onClick = { caseSet = "original" })
+            ChoiceChip("UPPER", selected = letterCase == "upper", onClick = { caseSet = "upper" })
+            ChoiceChip("lower", selected = letterCase == "lower", onClick = { caseSet = "lower" })
+            ChoiceChip("Sentence", selected = letterCase == "sentence", onClick = { caseSet = "sentence" })
+        }
+        PanelLabel("Alignment")
+        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            ChoiceChip("Left", selected = align.equals("left", ignoreCase = true), onClick = { alignSet = "left" })
+            ChoiceChip("Center", selected = align.equals("center", ignoreCase = true), onClick = { alignSet = "center" })
+            ChoiceChip("Right", selected = align.equals("right", ignoreCase = true), onClick = { alignSet = "right" })
+        }
+        PanelLabel("Style")
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            ChoiceChip("Italic", selected = italic, onClick = { italicSet = !italic })
+            ChoiceChip("Underline", selected = underline, onClick = { underlineSet = !underline })
+            ChoiceChip("Strike", selected = strike, onClick = { strikeSet = !strike })
+            ChoiceChip("Shadow", selected = shadow, onClick = { shadowSet = !shadow })
+        }
+        PanelLabel("Outline")
+        ValueSlider("Thickness", stroke, 0f..0.02f, { "${(it * 1000).toInt()}" }, onChange = { strokeSet = it })
+        StyleColourRow(strokeColour) { strokeColourSet = it }
+        PanelLabel("Background")
+        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            ChoiceChip("None", selected = bgColour.isEmpty(), onClick = { bgColourSet = "" })
+        }
+        StyleColourRow(bgColour) { bgColourSet = it }
+        ValueSlider("Opacity", bgAlpha, 0f..1f, { "${(it * 100).toInt()}%" }, onChange = { bgAlphaSet = it })
+        ValueSlider("Corners", radius, 0f..0.04f, { "${(it * 1000).toInt()}" }, onChange = { radiusSet = it })
+        PanelLabel("Spacing")
+        ValueSlider("Lines", lines, 0.8f..2f, { "%.2f".format(it) }, onChange = { lineSet = it })
+        ValueSlider("Letters", tracking, -0.005f..0.03f, { "%.1f".format(it * 100) }, onChange = { trackingSet = it })
     }
 }
